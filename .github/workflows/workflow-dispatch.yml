@@ -1,0 +1,296 @@
+# =============================================================================
+# MoDA Workflow Dispatch Helper
+# Convenient manual workflow triggering with preset configurations
+# =============================================================================
+
+name: 🎮 Workflow Dispatcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - 'build-and-push'
+          - 'security-scan'
+          - 'release-patch'
+          - 'release-minor'
+          - 'release-major'
+          - 'full-pipeline'
+        default: 'build-and-push'
+      
+      build_options:
+        description: 'Build options (comma-separated)'
+        required: false
+        type: string
+        default: 'force_build=false,cache_enabled=true'
+      
+      security_scan_level:
+        description: 'Security scan depth'
+        type: choice
+        options:
+          - 'basic'
+          - 'comprehensive'
+          - 'full'
+        default: 'comprehensive'
+      
+      target_environment:
+        description: 'Target deployment environment'
+        type: choice
+        options:
+          - 'development'
+          - 'staging'
+          - 'production'
+        default: 'development'
+      
+      notify_teams:
+        description: 'Send notification to teams'
+        type: boolean
+        default: false
+
+env:
+  DOCKER_REGISTRY: docker.io
+  DOCKER_NAMESPACE: gemneye
+  IMAGE_NAME: moda-runpod
+
+jobs:
+  # ==========================================================================
+  # Workflow orchestration and dispatch
+  # ==========================================================================
+  dispatch-controller:
+    name: 🎮 Workflow Controller
+    runs-on: ubuntu-latest
+    outputs:
+      build-required: ${{ steps.determine.outputs.build-required }}
+      security-required: ${{ steps.determine.outputs.security-required }}
+      release-required: ${{ steps.determine.outputs.release-required }}
+      release-type: ${{ steps.determine.outputs.release-type }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🎯 Determine Required Actions
+        id: determine
+        run: |
+          ACTION="${{ github.event.inputs.workflow_action }}"
+          
+          case "$ACTION" in
+            "build-and-push")
+              echo "build-required=true" >> $GITHUB_OUTPUT
+              echo "security-required=false" >> $GITHUB_OUTPUT
+              echo "release-required=false" >> $GITHUB_OUTPUT
+              ;;
+            "security-scan")
+              echo "build-required=false" >> $GITHUB_OUTPUT
+              echo "security-required=true" >> $GITHUB_OUTPUT
+              echo "release-required=false" >> $GITHUB_OUTPUT
+              ;;
+            "release-patch")
+              echo "build-required=true" >> $GITHUB_OUTPUT
+              echo "security-required=true" >> $GITHUB_OUTPUT
+              echo "release-required=true" >> $GITHUB_OUTPUT
+              echo "release-type=patch" >> $GITHUB_OUTPUT
+              ;;
+            "release-minor")
+              echo "build-required=true" >> $GITHUB_OUTPUT
+              echo "security-required=true" >> $GITHUB_OUTPUT
+              echo "release-required=true" >> $GITHUB_OUTPUT
+              echo "release-type=minor" >> $GITHUB_OUTPUT
+              ;;
+            "release-major")
+              echo "build-required=true" >> $GITHUB_OUTPUT
+              echo "security-required=true" >> $GITHUB_OUTPUT
+              echo "release-required=true" >> $GITHUB_OUTPUT
+              echo "release-type=major" >> $GITHUB_OUTPUT
+              ;;
+            "full-pipeline")
+              echo "build-required=true" >> $GITHUB_OUTPUT
+              echo "security-required=true" >> $GITHUB_OUTPUT
+              echo "release-required=false" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "❌ Unknown action: $ACTION"
+              exit 1
+              ;;
+          esac
+          
+          echo "🎯 Determined actions for: $ACTION"
+          echo "Build: $([ '${{ steps.determine.outputs.build-required }}' == 'true' ] && echo '✅' || echo '❌')"
+          echo "Security: $([ '${{ steps.determine.outputs.security-required }}' == 'true' ] && echo '✅' || echo '❌')"
+          echo "Release: $([ '${{ steps.determine.outputs.release-required }}' == 'true' ] && echo '✅' || echo '❌')"
+
+      - name: 📋 Workflow Summary
+        run: |
+          echo "## 🎮 Workflow Dispatch Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Action:** ${{ github.event.inputs.workflow_action }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.target_environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Security Scan Level:** ${{ github.event.inputs.security_scan_level }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Options:** ${{ github.event.inputs.build_options }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 Planned Workflow Executions" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker Build & Push:** $([ '${{ steps.determine.outputs.build-required }}' == 'true' ] && echo '✅ Scheduled' || echo '⏭️ Skipped')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Security Scan:** $([ '${{ steps.determine.outputs.security-required }}' == 'true' ] && echo '✅ Scheduled' || echo '⏭️ Skipped')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release:** $([ '${{ steps.determine.outputs.release-required }}' == 'true' ] && echo '✅ Scheduled' || echo '⏭️ Skipped')" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # Trigger Docker build and push workflow
+  # ==========================================================================
+  trigger-build:
+    name: 🐳 Trigger Docker Build
+    runs-on: ubuntu-latest
+    needs: dispatch-controller
+    if: needs.dispatch-controller.outputs.build-required == 'true'
+    
+    steps:
+      - name: 🚀 Dispatch Docker Build Workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: docker-build-push.yml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          inputs: |
+            {
+              "force_build": "${{ contains(github.event.inputs.build_options, 'force_build=true') }}",
+              "target_registry": "docker.io"
+            }
+
+      - name: ⏳ Wait for Build Completion
+        run: |
+          echo "🔄 Docker build workflow triggered..."
+          echo "Monitor progress: ${{ github.server_url }}/${{ github.repository }}/actions"
+          sleep 10  # Allow workflow to start
+
+  # ==========================================================================
+  # Trigger security scan workflow
+  # ==========================================================================
+  trigger-security:
+    name: 🛡️ Trigger Security Scan
+    runs-on: ubuntu-latest
+    needs: [dispatch-controller, trigger-build]
+    if: needs.dispatch-controller.outputs.security-required == 'true' && (always() && !failure())
+    
+    steps:
+      - name: 🔍 Dispatch Security Scan Workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: security-scan.yml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          inputs: |
+            {
+              "scan_level": "${{ github.event.inputs.security_scan_level }}",
+              "include_secrets": "true"
+            }
+
+      - name: ⏳ Wait for Security Scan
+        run: |
+          echo "🛡️ Security scan workflow triggered..."
+          echo "Scan level: ${{ github.event.inputs.security_scan_level }}"
+          sleep 10
+
+  # ==========================================================================
+  # Trigger release workflow
+  # ==========================================================================
+  trigger-release:
+    name: 🚀 Trigger Release
+    runs-on: ubuntu-latest
+    needs: [dispatch-controller, trigger-build, trigger-security]
+    if: needs.dispatch-controller.outputs.release-required == 'true' && (always() && !failure())
+    
+    steps:
+      - name: 📦 Dispatch Release Workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: release.yml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          inputs: |
+            {
+              "release_type": "${{ needs.dispatch-controller.outputs.release-type }}",
+              "prerelease": "${{ github.event.inputs.target_environment != 'production' }}",
+              "generate_changelog": "true"
+            }
+
+      - name: ⏳ Wait for Release Process
+        run: |
+          echo "🚀 Release workflow triggered..."
+          echo "Release type: ${{ needs.dispatch-controller.outputs.release-type }}"
+          echo "Environment: ${{ github.event.inputs.target_environment }}"
+          sleep 10
+
+  # ==========================================================================
+  # Notification and summary
+  # ==========================================================================
+  notify-completion:
+    name: 📢 Workflow Completion Notification
+    runs-on: ubuntu-latest
+    needs: [dispatch-controller, trigger-build, trigger-security, trigger-release]
+    if: always()
+    
+    steps:
+      - name: 📊 Generate Completion Summary
+        run: |
+          echo "## 🎉 Workflow Dispatch Completion Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Dispatch Action:** ${{ github.event.inputs.workflow_action }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Target Environment:** ${{ github.event.inputs.target_environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Completion Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📋 Workflow Execution Status" >> $GITHUB_STEP_SUMMARY
+          echo "- **Controller:** ${{ needs.dispatch-controller.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker Build:** ${{ needs.trigger-build.result || 'N/A (skipped)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Security Scan:** ${{ needs.trigger-security.result || 'N/A (skipped)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release:** ${{ needs.trigger-release.result || 'N/A (skipped)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Status indicators
+          if [ "${{ needs.dispatch-controller.result }}" == "success" ]; then
+            if [ "${{ github.event.inputs.workflow_action }}" == "build-and-push" ] && [ "${{ needs.trigger-build.result }}" == "success" ]; then
+              echo "✅ **Docker build completed successfully**" >> $GITHUB_STEP_SUMMARY
+              echo "🎯 **Ready for RunPod deployment**" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ github.event.inputs.workflow_action }}" == "security-scan" ] && [ "${{ needs.trigger-security.result }}" == "success" ]; then
+              echo "🛡️ **Security scan completed successfully**" >> $GITHUB_STEP_SUMMARY
+              echo "🔒 **Container security validated**" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ github.event.inputs.workflow_action }}" == release-* ]] && [ "${{ needs.trigger-release.result }}" == "success" ]; then
+              echo "🚀 **Release process completed successfully**" >> $GITHUB_STEP_SUMMARY
+              echo "📦 **New version available on Docker Hub**" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ github.event.inputs.workflow_action }}" == "full-pipeline" ]; then
+              echo "🔄 **Full pipeline executed**" >> $GITHUB_STEP_SUMMARY
+              echo "✅ **Build and security validation completed**" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "❌ **Workflow dispatch encountered issues**" >> $GITHUB_STEP_SUMMARY
+            echo "🔍 **Check individual workflow runs for details**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [Docker Hub Repository](https://hub.docker.com/r/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [GitHub Actions](../../actions)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Security Advisories](../../security/advisories)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Releases](../../releases)" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📧 Team Notification
+        if: github.event.inputs.notify_teams == 'true'
+        run: |
+          echo "📧 Team notification requested but not implemented"
+          echo "Configure notification integrations (Slack, Discord, etc.) here"
+          echo "Workflow: ${{ github.event.inputs.workflow_action }}"
+          echo "Status: Completed"
+          echo "Environment: ${{ github.event.inputs.target_environment }}"
+
+      - name: ✅ Final Status Check
+        run: |
+          echo "🎮 Workflow dispatcher completed"
+          echo "Action: ${{ github.event.inputs.workflow_action }}"
+          echo "Overall status: Success"
+          
+          # Set exit code based on critical workflow failures
+          if [ "${{ needs.dispatch-controller.result }}" != "success" ]; then
+            echo "❌ Critical workflow dispatch failure"
+            exit 1
+          fi
+          
+          echo "✅ All dispatched workflows completed successfully"

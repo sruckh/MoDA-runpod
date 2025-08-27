@@ -1,0 +1,75 @@
+# PyTorch 2.7.1 + CUDA 12.8 requirements for MoDA
+# Production-ready dependencies for RunPod deployment
+
+# Find links for PyTorch with CUDA 12.8
+--find-links https://download.pytorch.org/whl/cu128
+
+# Core PyTorch stack with CUDA 12.8 support
+torch==2.7.1+cu128
+torchvision==0.20.1+cu128
+torchaudio==2.7.1+cu128
+
+# Flash Attention (compatible with PyTorch 2.7.1)
+flash-attn==2.8.2
+
+# Core ML libraries
+accelerate==0.35.0
+diffusers==0.31.0
+transformers==4.47.1
+huggingface-hub==0.26.2
+tokenizers==0.21.0
+
+# Audio processing
+librosa==0.10.2.post1
+pydub==0.25.1
+audio-separator==0.17.2
+soundfile==0.12.1
+
+# Computer vision and media
+opencv-python==4.10.0.84
+pillow==10.4.0
+imageio==2.36.0
+imageio-ffmpeg==0.5.1
+scikit-image==0.24.0
+mediapipe[vision]==0.10.18
+
+# Video processing
+av==12.3.0
+ffmpeg-python==0.2.0
+moviepy==1.0.3
+decord==0.6.0
+
+# Deep learning utilities
+einops==0.8.0
+omegaconf==2.3.0
+xformers==0.0.29.post1
+
+# Face analysis (InsightFace)
+insightface==0.7.3
+onnx==1.17.0
+onnx2torch==1.5.15
+onnxruntime-gpu==1.19.2
+
+# Numerical computing
+numpy==1.26.4
+scipy==1.13.1
+matplotlib==3.9.2
+
+# Data handling
+lmdb==1.5.0
+pykalman==0.9.7
+pyyaml==6.0.2
+albumentations==1.4.18
+
+# ML monitoring and optimization
+tensorboardX==2.6.2.2
+bitsandbytes==0.44.1
+
+# Web interface
+gradio==5.7.0
+
+# Development utilities
+rich==13.8.1
+tyro==0.8.12
+isort==5.13.2
+setuptools==75.1.0

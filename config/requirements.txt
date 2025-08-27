@@ -1,0 +1,91 @@
+# MoDA AI Video Generation - Production Requirements
+# Updated for PyTorch 2.7.1 + CUDA 12.8 compatibility
+# Compatible with RunPod deployment and Python 3.10
+
+# PyTorch Ecosystem - Core ML Frameworks
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==2.7.1+cu128
+torchaudio==2.7.1+cu128
+torchvision==0.19.1+cu128
+
+# XFormers - Memory-efficient transformers (CUDA 12.8 compatible)
+# Requires PyTorch 2.7.x for optimal compatibility
+--index-url https://download.pytorch.org/whl/cu128
+xformers>=0.0.28.post1
+
+# HuggingFace Ecosystem - AI/ML Models
+transformers==4.47.0
+diffusers==0.32.1
+huggingface-hub==0.27.0
+accelerate==1.2.1
+
+# Deep Learning Optimizations
+# BitsAndBytes for quantization (CUDA 12.8 support)
+bitsandbytes==0.45.0
+
+# Vision & Graphics Processing
+opencv-python==4.10.0.84
+pillow==10.4.0
+scikit-image==0.24.0
+imageio==2.36.1
+imageio-ffmpeg==0.5.1
+
+# Audio Processing Libraries
+librosa==0.10.2.post1
+pydub>=0.25.1
+
+# Video Processing
+moviepy==1.0.3
+av==13.1.0
+decord==0.6.0
+
+# Face Analysis & Computer Vision
+insightface==0.7.3
+mediapipe[vision]==0.10.18
+
+# Numerical Computing
+numpy==1.26.4
+scipy==1.14.1
+einops==0.8.0
+omegaconf==2.3.0
+
+# ONNX Ecosystem - Updated for CUDA 12.8
+onnx==1.17.0
+onnx2torch==1.5.15
+onnxruntime-gpu==1.20.1
+
+# Scientific Computing & Visualization
+matplotlib==3.9.2
+tensorboardx==2.6.2.2
+
+# Data Storage & Management
+lmdb==1.5.0
+pykalman==0.9.7
+pyyaml==6.0.2
+
+# Gradio UI Framework
+gradio==5.1.0
+
+# Audio Separation & Processing
+audio-separator==0.17.2
+
+# Development Tools
+rich==13.9.4
+tyro==0.8.10
+setuptools==75.6.0
+
+# Python Code Quality
+isort==5.13.2
+
+# Machine Learning Utilities
+albumentations==1.4.23
+mlflow==2.19.0
+
+# Configuration Notice:
+# This requirements.txt is optimized for:
+# - PyTorch 2.7.1 with CUDA 12.8 support
+# - RunPod deployment environments
+# - Academic research and ethical AI development
+# - Python 3.10 compatibility
+# - GPU memory optimization for large diffusion models
+# - Production-ready video generation workflows

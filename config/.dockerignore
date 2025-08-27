@@ -1,0 +1,105 @@
+# Docker build context optimization for MoDA project
+# Exclude unnecessary files to speed up build and reduce context size
+
+# Version control and development
+.git/
+.gitignore
+*.git*
+.github/
+.claude*/
+.serena/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environment and config
+.env
+.env.local
+.env.*.local
+*.local
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter and notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# Data and model checkpoints (exclude from Docker build)
+data/
+datasets/
+checkpoints/
+pretrained_models/
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.h5
+
+# Logs and temporary files
+logs/
+*.log
+tmp/
+temp/
+.tmp/
+
+# Media files (samples, outputs)
+outputs/
+results/
+samples/
+*.mp4
+*.avi
+*.mov
+*.wav
+*.mp3
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# Documentation (will be created in container if needed)
+docs/
+*.md
+README*
+LICENSE*
+
+# OS specific
+.DS_Store
+Thumbs.db
+*.bak
+
+# Large binary files
+*.tar.gz
+*.zip
+*.rar
+
+# Memory dumps and core files
+core
+*.core
+
+# Test files
+tests/
+test_*.py
+*_test.py

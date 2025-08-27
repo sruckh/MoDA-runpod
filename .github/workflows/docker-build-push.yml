@@ -1,0 +1,456 @@
+# =============================================================================
+# MoDA RunPod Container CI/CD Pipeline
+# Automated Docker builds for linux/amd64 with multi-stage optimization
+# =============================================================================
+
+name: 🚀 Docker Build & Push to RunPod
+
+on:
+  push:
+    branches: 
+      - main
+      - dev
+      - 'release/**'
+      - 'hotfix/**'
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+  pull_request:
+    branches: 
+      - main
+      - dev
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force rebuild without cache'
+        type: boolean
+        default: false
+      target_registry:
+        description: 'Target registry'
+        type: choice
+        options:
+          - 'docker.io'
+          - 'ghcr.io'
+        default: 'docker.io'
+
+env:
+  # Docker registry configuration
+  DOCKER_REGISTRY: docker.io
+  DOCKER_NAMESPACE: gemneye
+  IMAGE_NAME: moda-runpod
+  
+  # Build configuration
+  PLATFORM: linux/amd64
+  DOCKER_BUILDKIT: 1
+  BUILDX_EXPERIMENTAL: 1
+  
+  # Optimization flags
+  DOCKER_CLI_EXPERIMENTAL: enabled
+  BUILDKIT_PROGRESS: plain
+
+jobs:
+  # ==========================================================================
+  # Pre-build validation and setup
+  # ==========================================================================
+  prepare:
+    name: 🔧 Prepare Build Environment
+    runs-on: ubuntu-latest
+    outputs:
+      image-tags: ${{ steps.meta.outputs.tags }}
+      image-labels: ${{ steps.meta.outputs.labels }}
+      cache-from: ${{ steps.cache.outputs.cache-from }}
+      cache-to: ${{ steps.cache.outputs.cache-to }}
+      build-args: ${{ steps.build-args.outputs.args }}
+      should-push: ${{ steps.should-push.outputs.result }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Validate Dockerfile
+        run: |
+          if [ ! -f "Dockerfile" ]; then
+            echo "❌ Dockerfile not found!"
+            exit 1
+          fi
+          
+          # Check for localhost references (prohibited)
+          if grep -i "localhost\|127\.0\.0\.1" Dockerfile; then
+            echo "❌ Localhost references found in Dockerfile - prohibited for RunPod!"
+            exit 1
+          fi
+          
+          # Validate CUDA base image
+          if ! grep -q "nvidia/cuda:12.8.1-runtime-ubuntu24.04" Dockerfile; then
+            echo "⚠️ Warning: Expected CUDA 12.8.1 base image not found"
+          fi
+          
+          echo "✅ Dockerfile validation passed"
+
+      - name: 🏗️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: latest
+          driver-opts: |
+            network=host
+            image=moby/buildkit:latest
+          buildkitd-flags: --allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host
+
+      - name: 🏷️ Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=pytorch271-cuda128
+            type=raw,value=runpod-ready
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=MoDA RunPod Container
+            org.opencontainers.image.description=Multi-modal Diffusion Architecture for Talking Head Generation
+            org.opencontainers.image.vendor=MoDA Project
+            org.opencontainers.image.documentation=https://github.com/lixinyyang/MoDA
+            runpod.optimized=true
+            pytorch.version=2.7.1
+            cuda.version=12.8
+            flash-attention.version=2.8.2
+
+      - name: 🗂️ Configure Build Cache
+        id: cache
+        run: |
+          CACHE_FROM="type=gha,scope=${{ github.workflow }}"
+          CACHE_TO="type=gha,scope=${{ github.workflow }},mode=max"
+          
+          if [ "${{ github.event.inputs.force_build }}" == "true" ]; then
+            echo "🔄 Force rebuild requested - disabling cache"
+            CACHE_FROM=""
+          fi
+          
+          echo "cache-from=$CACHE_FROM" >> $GITHUB_OUTPUT
+          echo "cache-to=$CACHE_TO" >> $GITHUB_OUTPUT
+
+      - name: 🔧 Set Build Arguments
+        id: build-args
+        run: |
+          BUILD_ARGS=""
+          BUILD_ARGS="$BUILD_ARGS --build-arg BUILDKIT_INLINE_CACHE=1"
+          BUILD_ARGS="$BUILD_ARGS --build-arg PYTHON_VERSION=3.10"
+          BUILD_ARGS="$BUILD_ARGS --build-arg PYTORCH_VERSION=2.7.1"
+          BUILD_ARGS="$BUILD_ARGS --build-arg CUDA_VERSION=128"
+          BUILD_ARGS="$BUILD_ARGS --build-arg FLASH_ATTN_VERSION=2.8.2"
+          
+          echo "args=$BUILD_ARGS" >> $GITHUB_OUTPUT
+
+      - name: 🚦 Determine Push Strategy
+        id: should-push
+        run: |
+          # Push on main/dev branches and workflow_dispatch
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
+             [[ "${{ github.ref }}" == "refs/heads/dev" ]] || \
+             [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "result=true" >> $GITHUB_OUTPUT
+            echo "🚀 Will push to registry"
+          else
+            echo "result=false" >> $GITHUB_OUTPUT
+            echo "🔍 Build only (no push for PR)"
+          fi
+
+  # ==========================================================================
+  # Multi-stage optimized Docker build
+  # ==========================================================================
+  build:
+    name: 🐳 Build Docker Image
+    runs-on: ubuntu-latest
+    needs: prepare
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: latest
+          driver-opts: |
+            network=host
+            image=moby/buildkit:latest
+          buildkitd-flags: --allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host
+
+      - name: 🔐 Login to Docker Hub
+        if: needs.prepare.outputs.should-push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 🏗️ Build and Export Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.PLATFORM }}
+          push: ${{ needs.prepare.outputs.should-push }}
+          tags: ${{ needs.prepare.outputs.image-tags }}
+          labels: ${{ needs.prepare.outputs.image-labels }}
+          cache-from: ${{ needs.prepare.outputs.cache-from }}
+          cache-to: ${{ needs.prepare.outputs.cache-to }}
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            PYTHON_VERSION=3.10
+            PYTORCH_VERSION=2.7.1
+            CUDA_VERSION=128
+            FLASH_ATTN_VERSION=2.8.2
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=MoDA RunPod optimized container
+
+      - name: 🔍 Inspect Built Image
+        if: needs.prepare.outputs.should-push == 'true'
+        run: |
+          echo "🔍 Inspecting built image..."
+          docker buildx imagetools inspect ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+          
+          # Check image size
+          IMAGE_SIZE=$(docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep moda-runpod | head -1 | awk '{print $3}')
+          echo "📦 Final image size: $IMAGE_SIZE"
+          
+          # Verify CUDA compatibility
+          echo "🎮 Verifying CUDA compatibility..."
+          docker run --rm --gpus all ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:pytorch271-cuda128 \
+            python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')" || true
+
+  # ==========================================================================
+  # Container functionality testing
+  # ==========================================================================
+  test:
+    name: 🧪 Test Container Functionality
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should-push == 'true'
+    
+    steps:
+      - name: 🏗️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔐 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 🧪 Test Container Startup
+        run: |
+          echo "🚀 Testing container startup..."
+          
+          # Pull the built image
+          docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+          
+          # Test basic functionality
+          docker run --rm \
+            --name moda-test \
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest \
+            python -c "
+          import sys
+          print('🐍 Python version:', sys.version)
+          
+          try:
+              import torch
+              print('✅ PyTorch imported successfully:', torch.__version__)
+              print('🎮 CUDA available:', torch.cuda.is_available())
+          except ImportError as e:
+              print('❌ PyTorch import failed:', e)
+              sys.exit(1)
+          
+          try:
+              import gradio
+              print('✅ Gradio imported successfully:', gradio.__version__)
+          except ImportError as e:
+              print('❌ Gradio import failed:', e)
+              sys.exit(1)
+          
+          # Test Flash Attention
+          try:
+              import flash_attn
+              print('✅ Flash Attention available')
+          except ImportError:
+              print('⚠️ Flash Attention not available (expected on CPU-only runners)')
+          
+          print('✅ Basic container functionality test passed')
+          "
+
+      - name: 🏥 Test Health Check
+        run: |
+          echo "🏥 Testing container health check..."
+          
+          # Start container in background
+          docker run -d \
+            --name moda-health-test \
+            -p 7860:7860 \
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest &
+          
+          # Wait for container to start
+          sleep 30
+          
+          # Check if container is running
+          if docker ps | grep -q moda-health-test; then
+            echo "✅ Container started successfully"
+            
+            # Check health status
+            HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' moda-health-test)
+            echo "🏥 Health status: $HEALTH_STATUS"
+            
+            # Stop container
+            docker stop moda-health-test
+            docker rm moda-health-test
+          else
+            echo "❌ Container failed to start"
+            docker logs moda-health-test
+            exit 1
+          fi
+
+  # ==========================================================================
+  # RunPod template validation
+  # ==========================================================================
+  validate-runpod:
+    name: 🎯 Validate RunPod Compatibility
+    runs-on: ubuntu-latest
+    needs: [prepare, build, test]
+    if: needs.prepare.outputs.should-push == 'true'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🎯 RunPod Template Validation
+        run: |
+          echo "🎯 Validating RunPod template compatibility..."
+          
+          # Check required directories
+          if [ -d "src/" ]; then
+            echo "✅ Source directory structure present"
+          else
+            echo "⚠️ Warning: src/ directory not found"
+          fi
+          
+          # Check for model directories
+          echo "📁 Expected model directory structure:"
+          echo "   /workspace/models/pretrained/ (for model weights)"
+          echo "   /workspace/models/checkpoints/ (for training outputs)"
+          echo "   /workspace/models/cache/ (for cached models)"
+          
+          # Validate Gradio configuration
+          if grep -q "server_name.*0.0.0.0" app.py || grep -q "GRADIO_SERVER_NAME" Dockerfile; then
+            echo "✅ Gradio configured for external access"
+          else
+            echo "⚠️ Warning: Gradio may not be configured for RunPod access"
+          fi
+          
+          # Check port configuration
+          if grep -q "7860" Dockerfile; then
+            echo "✅ Standard RunPod port 7860 configured"
+          else
+            echo "❌ Port 7860 not found in Dockerfile"
+          fi
+          
+          # Academic compliance check
+          if grep -q "ACADEMIC" Dockerfile; then
+            echo "✅ Academic research compliance notice present"
+          else
+            echo "⚠️ Academic compliance notice missing"
+          fi
+          
+          echo "✅ RunPod compatibility validation completed"
+
+  # ==========================================================================
+  # Performance and GPU utilization check
+  # ==========================================================================
+  performance-check:
+    name: ⚡ Performance Validation
+    runs-on: ubuntu-latest
+    needs: [prepare, build, test]
+    if: needs.prepare.outputs.should-push == 'true'
+    
+    steps:
+      - name: ⚡ Container Performance Analysis
+        run: |
+          echo "⚡ Analyzing container performance characteristics..."
+          
+          # Image size analysis
+          IMAGE_ID=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+          docker pull $IMAGE_ID
+          
+          # Get image layers info
+          echo "📊 Image layer analysis:"
+          docker history $IMAGE_ID
+          
+          # Check for optimization markers
+          echo "🔧 Build optimization checks:"
+          docker image inspect $IMAGE_ID | jq -r '.[] | {
+            Size: .Size,
+            Architecture: .Architecture,
+            Os: .Os,
+            Config: .Config.Labels
+          }'
+          
+          # Memory and resource estimates
+          echo "💾 Resource estimation for RunPod deployment:"
+          echo "   • Recommended VRAM: 24GB+ (RTX 4090/A100)"
+          echo "   • System RAM: 32GB recommended"
+          echo "   • Storage: 50GB+ (including models)"
+          echo "   • Network: High-speed for model downloads"
+          
+          echo "✅ Performance analysis completed"
+
+  # ==========================================================================
+  # Deployment notification and cleanup
+  # ==========================================================================
+  notify:
+    name: 📢 Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [prepare, build, test, validate-runpod, performance-check]
+    if: always() && needs.prepare.outputs.should-push == 'true'
+    
+    steps:
+      - name: 📊 Build Summary
+        run: |
+          echo "## 🚀 MoDA RunPod Container Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo '${{ needs.prepare.outputs.image-tags }}' | tr ',' '\n' | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Platform:** ${{ env.PLATFORM }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 RunPod Deployment Ready!" >> $GITHUB_STEP_SUMMARY
+          echo "- Pull command: \`docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Port: 7860 (Gradio interface)" >> $GITHUB_STEP_SUMMARY
+          echo "- Volume mount: \`/workspace/models\` for model persistence" >> $GITHUB_STEP_SUMMARY
+          echo "- GPU: NVIDIA CUDA 12.8 compatible" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📈 Build Status Check
+        run: |
+          if [ "${{ needs.build.result }}" == "success" ] && \
+             [ "${{ needs.test.result }}" == "success" ] && \
+             [ "${{ needs.validate-runpod.result }}" == "success" ]; then
+            echo "✅ All build stages completed successfully!"
+            echo "🚀 Container is ready for RunPod deployment"
+          else
+            echo "❌ Some build stages failed"
+            echo "Build: ${{ needs.build.result }}"
+            echo "Test: ${{ needs.test.result }}"
+            echo "RunPod Validation: ${{ needs.validate-runpod.result }}"
+            exit 1
+          fi

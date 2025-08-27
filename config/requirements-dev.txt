@@ -1,0 +1,135 @@
+# MoDA AI Video Generation - Development Requirements
+# Extended development environment with testing, profiling, and debugging tools
+# Based on production requirements with additional dev tooling
+
+# Include all production requirements
+-r requirements.txt
+
+# Development & Testing Framework
+pytest==8.3.4
+pytest-cov==6.0.0
+pytest-xdist==3.6.0
+pytest-benchmark==4.0.0
+
+# Code Quality & Formatting
+black==24.10.0
+flake8==7.1.1
+mypy==1.13.0
+pre-commit==4.0.1
+
+# Documentation Generation
+sphinx==8.1.3
+sphinx-rtd-theme==3.0.2
+nbsphinx==0.9.5
+
+# Jupyter Development Environment
+jupyter==1.1.1
+jupyterlab==4.3.3
+ipywidgets==8.1.5
+notebook==7.3.1
+
+# Performance Profiling & Debugging
+py-spy==0.3.14
+memory-profiler==0.61.0
+line-profiler==4.1.3
+pympler==0.9
+
+# Advanced ML Development
+# Flash Attention 2 for enhanced transformer performance
+# Note: This requires manual installation of compatible wheel
+# flash-attn==2.8.2  # Install separately via wheel
+
+# Triton for custom CUDA kernels (development/experimentation)
+triton>=3.1.0
+
+# Model Optimization Libraries
+optimum[onnxruntime]==1.23.3
+torch-tensorrt>=2.5.0
+
+# Data Science & Analysis
+pandas==2.2.3
+seaborn==0.13.2
+plotly==5.24.1
+
+# Experiment Tracking
+wandb==0.18.7
+tensorboard==2.18.0
+
+# GPU Utilities & Monitoring
+pynvml==11.5.3
+gpustat==1.1.1
+
+# Advanced Audio Processing
+torchaudio-transforms>=0.1.0
+asteroid>=0.7.0
+
+# Video Analysis & Processing
+vidgear[asyncio]==0.3.3
+
+# Web Development (for advanced UI features)
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+streamlit==1.40.2
+
+# Database & Storage (for experiment tracking)
+sqlalchemy==2.0.36
+redis==5.2.1
+
+# Advanced Computer Vision
+kornia==0.7.4
+torchmetrics==1.5.2
+
+# Model Serving & Deployment
+# TorchServe for model deployment
+torch-model-archiver>=0.12.0
+
+# Development Utilities
+ipdb==0.13.13
+tqdm==4.67.1
+click==8.1.7
+
+# Environment Management
+python-dotenv==1.0.1
+
+# Advanced Debugging
+icecream==2.1.3
+
+# Performance Testing
+locust==2.32.4
+
+# Code Analysis
+vulture==2.13  # Dead code finder
+radon==6.0.1   # Code complexity analysis
+
+# Documentation & Type Checking
+pydocstyle==6.3.0
+mypy-extensions==1.0.0
+
+# Development Configuration Notes:
+# 
+# Flash Attention 2 Installation:
+# pip install flash-attn==2.8.2 --no-build-isolation
+# 
+# For CUDA 12.8 compatibility, ensure:
+# - NVIDIA drivers >=525.60.13
+# - CUDA toolkit 12.8+
+# - Compatible cuDNN version
+#
+# Development Environment Setup:
+# 1. Install conda/mamba environment
+# 2. Install requirements-dev.txt
+# 3. Setup pre-commit hooks: pre-commit install
+# 4. Configure development database if needed
+# 5. Install additional CUDA kernels manually if required
+#
+# Memory Optimization Tips:
+# - Use gradient checkpointing for large models
+# - Enable mixed precision training (fp16/bf16)
+# - Configure model parallel processing for multi-GPU
+# - Monitor GPU memory usage with gpustat
+#
+# Testing Framework:
+# - Run tests: pytest tests/ -v
+# - Coverage: pytest --cov=src tests/
+# - Benchmarks: pytest tests/benchmark/
+# - Parallel testing: pytest -n auto

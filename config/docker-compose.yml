@@ -1,0 +1,115 @@
+# Docker Compose configuration for MoDA local development and testing
+# Production deployment uses RunPod with direct Docker container deployment
+version: '3.8'
+
+services:
+  moda-dev:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: app-stage
+      args:
+        PYTHON_VERSION: "3.10"
+        PYTORCH_VERSION: "2.7.1"
+        CUDA_VERSION: "128"
+        FLASH_ATTN_VERSION: "2.8.2"
+    
+    image: moda-runpod:pytorch271-cuda128
+    container_name: moda-development
+    
+    # GPU access (requires nvidia-docker)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # Environment variables
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+      - PYTHONPATH=/workspace
+      - CUDA_VISIBLE_DEVICES=0
+      - HF_HOME=/workspace/models/cache/huggingface
+      - TORCH_HOME=/workspace/models/cache/torch
+    
+    # Port mapping
+    ports:
+      - "7860:7860"  # Gradio interface
+      - "8000:8000"  # API port (if needed)
+    
+    # Volume mounts (simulating RunPod structure)
+    volumes:
+      # Source code (development only)
+      - ../src:/workspace/src:rw
+      - ../app.py:/workspace/app.py:rw
+      
+      # Model storage (persistent)
+      - moda-models:/workspace/models
+      - moda-data:/workspace/data
+      - moda-outputs:/workspace/outputs
+      - moda-logs:/workspace/logs
+      
+      # Configuration
+      - ../config:/workspace/config:ro
+    
+    # Working directory
+    working_dir: /workspace
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "/workspace/healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Resource limits (adjust based on available hardware)
+    mem_limit: 16g
+    memswap_limit: 16g
+    shm_size: 8g
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # User mapping (matches Dockerfile)
+    user: "1000:1000"
+    
+    # Enable NVIDIA runtime
+    runtime: nvidia
+
+volumes:
+  moda-models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/../models
+  
+  moda-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/../data
+  
+  moda-outputs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/../outputs
+  
+  moda-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/../logs
+
+networks:
+  default:
+    name: moda-network
+    driver: bridge

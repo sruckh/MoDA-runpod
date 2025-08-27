@@ -1,0 +1,426 @@
+# =============================================================================
+# MoDA RunPod Container Release Automation
+# Semantic versioning and automated release management
+# =============================================================================
+
+name: 🚀 Release Automation
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'  # Pre-release tags
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - 'patch'
+          - 'minor'
+          - 'major'
+          - 'prerelease'
+        default: 'patch'
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+      generate_changelog:
+        description: 'Generate changelog'
+        type: boolean
+        default: true
+
+env:
+  DOCKER_REGISTRY: docker.io
+  DOCKER_NAMESPACE: gemneye
+  IMAGE_NAME: moda-runpod
+  RELEASE_NOTES_PATH: /tmp/release-notes
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: read
+
+jobs:
+  # ==========================================================================
+  # Release preparation and validation
+  # ==========================================================================
+  prepare-release:
+    name: 🔧 Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is-prerelease: ${{ steps.version.outputs.is-prerelease }}
+      release-notes: ${{ steps.notes.outputs.notes }}
+      should-release: ${{ steps.validation.outputs.should-release }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔢 Determine Version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
+            # Extract version from tag
+            VERSION=${GITHUB_REF#refs/tags/}
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            
+            # Check if pre-release
+            if [[ "$VERSION" == *"-"* ]]; then
+              echo "is-prerelease=true" >> $GITHUB_OUTPUT
+            else
+              echo "is-prerelease=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            # Get latest tag
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            echo "Latest tag: $LATEST_TAG"
+            
+            # Parse version components
+            if [[ $LATEST_TAG =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+              MAJOR=${BASH_REMATCH[1]}
+              MINOR=${BASH_REMATCH[2]}
+              PATCH=${BASH_REMATCH[3]}
+            else
+              MAJOR=0; MINOR=0; PATCH=0
+            fi
+            
+            # Increment version based on release type
+            case "${{ github.event.inputs.release_type }}" in
+              "major")
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              "minor")
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              "patch")
+                PATCH=$((PATCH + 1))
+                ;;
+              "prerelease")
+                PATCH=$((PATCH + 1))
+                VERSION="v${MAJOR}.${MINOR}.${PATCH}-rc.1"
+                echo "version=$VERSION" >> $GITHUB_OUTPUT
+                echo "is-prerelease=true" >> $GITHUB_OUTPUT
+                exit 0
+                ;;
+            esac
+            
+            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "is-prerelease=${{ github.event.inputs.prerelease }}" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "Generated version: $VERSION"
+
+      - name: 📝 Generate Release Notes
+        id: notes
+        if: github.event.inputs.generate_changelog != 'false'
+        run: |
+          mkdir -p ${{ env.RELEASE_NOTES_PATH }}
+          
+          # Get previous version for changelog
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          echo "Previous version: $PREV_TAG"
+          
+          # Generate changelog
+          echo "# 🚀 MoDA RunPod Container Release ${{ steps.version.outputs.version }}" > ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "**Release Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "**Docker Image:** \`${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}\`" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          
+          # Add what's new section
+          echo "## 🆕 What's New" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          
+          # Get commits since last tag
+          if git rev-list $PREV_TAG..HEAD --oneline > /tmp/commits.txt 2>/dev/null; then
+            # Categorize commits
+            echo "### ✨ Features" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+            grep -i -E "feat|feature|add" /tmp/commits.txt | sed 's/^/- /' >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md || echo "- No new features" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+            echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+            
+            echo "### 🐛 Bug Fixes" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+            grep -i -E "fix|bug|patch" /tmp/commits.txt | sed 's/^/- /' >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md || echo "- No bug fixes" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+            echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+            
+            echo "### 🔧 Improvements" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+            grep -i -E "improve|update|enhance|optimize" /tmp/commits.txt | sed 's/^/- /' >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md || echo "- No improvements" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+            echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          fi
+          
+          # Add technical specifications
+          echo "## 🔧 Technical Specifications" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **Base Image:** NVIDIA CUDA 12.8.1 Ubuntu 24.04 Runtime" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **PyTorch Version:** 2.7.1 with CUDA 12.8 support" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **Flash Attention:** 2.8.2 optimized for CUDA 12.8" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **Python Version:** 3.10" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **Architecture:** linux/amd64 (RunPod optimized)" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          
+          # Add RunPod deployment instructions
+          echo "## 🎯 RunPod Deployment" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "### Quick Start" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "\`\`\`bash" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "# Pull the container" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "# Run on RunPod (with GPU)" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "# Mount /workspace/models for model persistence" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "# Access Gradio interface on port 7860" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "\`\`\`" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          
+          # Add system requirements
+          echo "### 🖥️ System Requirements" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **GPU:** NVIDIA GPU with CUDA 12.8+ support (RTX 4090/A100 recommended)" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **VRAM:** 24GB+ recommended for optimal performance" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **RAM:** 32GB system memory recommended" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- **Storage:** 50GB+ (including model weights)" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          
+          # Add compliance notice
+          echo "## 🎓 Academic Research Compliance" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "This container is designed for academic research and educational purposes. Please ensure:" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- ✅ Proper consent for all input media" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- ✅ Compliance with institutional ethics guidelines" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- ✅ Responsible use of AI-generated content" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "- ✅ Respect for privacy and intellectual property" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          echo "" >> ${{ env.RELEASE_NOTES_PATH }}/release-notes.md
+          
+          # Output the notes
+          NOTES=$(cat ${{ env.RELEASE_NOTES_PATH }}/release-notes.md)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: ✅ Validate Release
+        id: validation
+        run: |
+          echo "🔍 Validating release readiness..."
+          
+          # Check if Dockerfile exists and is valid
+          if [ ! -f "Dockerfile" ]; then
+            echo "❌ Dockerfile not found"
+            echo "should-release=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check if requirements files exist
+          if [ ! -f "config/requirements-pytorch271-cuda128.txt" ]; then
+            echo "❌ Requirements file not found"
+            echo "should-release=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check for basic application entry point
+          if [ ! -f "app.py" ]; then
+            echo "❌ Application entry point (app.py) not found"
+            echo "should-release=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Validate tag format if triggered by tag
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+            if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+              echo "❌ Invalid tag format: $TAG"
+              echo "should-release=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          fi
+          
+          echo "✅ Release validation passed"
+          echo "should-release=true" >> $GITHUB_OUTPUT
+
+  # ==========================================================================
+  # Build and push release images
+  # ==========================================================================
+  build-release:
+    name: 🏗️ Build Release Images
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    if: needs.prepare-release.outputs.should-release == 'true'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: latest
+          driver-opts: network=host
+
+      - name: 🔐 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 🏷️ Generate Image Tags
+        id: tags
+        run: |
+          VERSION="${{ needs.prepare-release.outputs.version }}"
+          BASE_IMAGE="${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}"
+          
+          TAGS="${BASE_IMAGE}:${VERSION}"
+          TAGS="${TAGS},${BASE_IMAGE}:pytorch271-cuda128"
+          
+          # Add latest tag for non-prerelease versions
+          if [ "${{ needs.prepare-release.outputs.is-prerelease }}" != "true" ]; then
+            TAGS="${TAGS},${BASE_IMAGE}:latest"
+            TAGS="${TAGS},${BASE_IMAGE}:stable"
+          else
+            TAGS="${TAGS},${BASE_IMAGE}:prerelease"
+          fi
+          
+          # Add semantic version tags
+          if [[ "$VERSION" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            MAJOR=${BASH_REMATCH[1]}
+            MINOR=${BASH_REMATCH[2]}
+            TAGS="${TAGS},${BASE_IMAGE}:${MAJOR}"
+            TAGS="${TAGS},${BASE_IMAGE}:${MAJOR}.${MINOR}"
+          fi
+          
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "Generated tags: $TAGS"
+
+      - name: 🏗️ Build and Push Release Images
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=MoDA RunPod Container
+            org.opencontainers.image.description=Multi-modal Diffusion Architecture for Talking Head Generation
+            org.opencontainers.image.version=${{ needs.prepare-release.outputs.version }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            runpod.optimized=true
+            pytorch.version=2.7.1
+            cuda.version=12.8
+            flash-attention.version=2.8.2
+            release.version=${{ needs.prepare-release.outputs.version }}
+            release.type=${{ github.event.inputs.release_type || 'tag' }}
+          cache-from: type=gha,scope=${{ github.workflow }}
+          cache-to: type=gha,scope=${{ github.workflow }},mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            PYTHON_VERSION=3.10
+            PYTORCH_VERSION=2.7.1
+            CUDA_VERSION=128
+            FLASH_ATTN_VERSION=2.8.2
+
+      - name: 🔍 Verify Release Images
+        run: |
+          echo "🔍 Verifying released images..."
+          
+          # Test each tag
+          for tag in $(echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n'); do
+            echo "Testing image: $tag"
+            docker run --rm $tag python -c "
+          import torch
+          import gradio
+          print(f'✅ Image verified: {torch.__version__}, Gradio: {gradio.__version__}')
+          "
+          done
+          
+          echo "✅ All release images verified successfully"
+
+  # ==========================================================================
+  # Create GitHub release
+  # ==========================================================================
+  create-github-release:
+    name: 📦 Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [prepare-release, build-release]
+    if: needs.prepare-release.outputs.should-release == 'true'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏷️ Create Git Tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION="${{ needs.prepare-release.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+
+      - name: 📦 Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.version }}
+          name: 🚀 MoDA RunPod Container ${{ needs.prepare-release.outputs.version }}
+          body: ${{ needs.prepare-release.outputs.release-notes }}
+          prerelease: ${{ needs.prepare-release.outputs.is-prerelease }}
+          draft: false
+          generate_release_notes: false
+          files: |
+            Dockerfile
+            config/requirements-pytorch271-cuda128.txt
+
+  # ==========================================================================
+  # Post-release validation and cleanup
+  # ==========================================================================
+  post-release:
+    name: 🧹 Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: [prepare-release, build-release, create-github-release]
+    if: always() && needs.prepare-release.outputs.should-release == 'true'
+    
+    steps:
+      - name: 📊 Release Summary
+        run: |
+          echo "## 🚀 Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.prepare-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Pre-release:** ${{ needs.prepare-release.outputs.is-prerelease }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Registry:** ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Docker Images Published:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-release.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:pytorch271-cuda128\`" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.prepare-release.outputs.is-prerelease }}" != "true" ]; then
+            echo "- \`${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:stable\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 RunPod Ready!" >> $GITHUB_STEP_SUMMARY
+          echo "The container is optimized for RunPod deployment with GPU acceleration." >> $GITHUB_STEP_SUMMARY
+
+      - name: ✅ Release Status Check
+        run: |
+          if [ "${{ needs.build-release.result }}" == "success" ] && \
+             [ "${{ needs.create-github-release.result }}" == "success" ]; then
+            echo "✅ Release completed successfully!"
+            echo "🚀 MoDA RunPod Container ${{ needs.prepare-release.outputs.version }} is now available"
+            echo "📦 Docker Hub: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}"
+            echo "📋 GitHub Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.prepare-release.outputs.version }}"
+          else
+            echo "❌ Release process encountered issues"
+            echo "Build: ${{ needs.build-release.result }}"
+            echo "GitHub Release: ${{ needs.create-github-release.result }}"
+            exit 1
+          fi
