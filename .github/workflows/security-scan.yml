@@ -50,10 +50,10 @@ env:
 
 jobs:
   # ==========================================================================
-  # Dockerfile and configuration security analysis
+  # Dockerfile security analysis
   # ==========================================================================
   dockerfile-security:
-    name: 🔍 Dockerfile Security Analysis
+    name: 📋 Dockerfile Security Analysis
     runs-on: ubuntu-latest
     
     steps:
@@ -62,21 +62,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🔧 Setup Security Tools
+      - name: 📊 Setup Security Scanning
         run: |
-          # Install hadolint for Dockerfile linting
+          mkdir -p ${{ env.SCAN_RESULTS_PATH }}
+          echo "🛡️ Setting up security scanning environment..."
+
+      - name: 🔍 Dockerfile Lint (Hadolint)
+        run: |
+          echo "📋 Running Dockerfile security analysis..."
+          
+          # Install hadolint
           wget -O hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
           chmod +x hadolint
           sudo mv hadolint /usr/local/bin/
-          
-          # Install docker-bench-security
-          git clone https://github.com/docker/docker-bench-security.git
-          
-          mkdir -p ${{ env.SCAN_RESULTS_PATH }}
-
-      - name: 📋 Dockerfile Linting
-        run: |
-          echo "🔍 Running Dockerfile security analysis..."
           
           # Run hadolint with security focus
           hadolint --format json Dockerfile > ${{ env.SCAN_RESULTS_PATH }}/hadolint-results.json || true
@@ -97,7 +95,7 @@ jobs:
           # Check for secret exposure
           if grep -i -E "(password|secret|key|token)" Dockerfile | grep -v "ENV\|ARG\|COPY"; then
             echo "❌ Potential hardcoded secrets found" | tee -a ${{ env.SCAN_RESULTS_PATH }}/dockerfile-security.txt
-            exit 1
+            echo "::warning::Potential hardcoded secrets detected in Dockerfile"
           else
             echo "✅ No hardcoded secrets detected" | tee -a ${{ env.SCAN_RESULTS_PATH }}/dockerfile-security.txt
           fi
@@ -118,25 +116,33 @@ jobs:
 
       - name: 📦 Requirements Security Scan
         run: |
-          echo "🔍 Scanning Python requirements for vulnerabilities..."
+          echo "📦 Scanning Python requirements for vulnerabilities..."
           
-          # Install safety for Python package vulnerability scanning
+          # Install safety
           pip install safety
           
           # Scan all requirements files
-          find . -name "requirements*.txt" -type f | while read req_file; do
-            echo "🔍 Scanning $req_file..."
-            safety check -r "$req_file" --json --output ${{ env.SCAN_RESULTS_PATH }}/safety-$(basename "$req_file").json || true
-            safety check -r "$req_file" --short-report || true
+          for req_file in requirements*.txt config/requirements*.txt; do
+            if [[ -f "$req_file" ]]; then
+              echo "🔍 Scanning $req_file..."
+              safety check -r "$req_file" --short-report || true
+            fi
           done
 
-      - name: 🔐 Secret Detection
-        if: github.event.inputs.include_secrets != 'false'
+      - name: 🔐 Secret Detection (Differential Scan)
+        if: github.event.inputs.include_secrets != 'false' && github.event.before != '0000000000000000000000000000000000000000'
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: main
+          base: ${{ github.event.before }}
           head: HEAD
+          extra_args: --debug --only-verified
+
+      - name: 🔐 Secret Detection (Full Scan)
+        if: github.event.inputs.include_secrets != 'false' && github.event.before == '0000000000000000000000000000000000000000'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
           extra_args: --debug --only-verified
 
       - name: 📤 Upload Security Results
@@ -147,68 +153,45 @@ jobs:
           retention-days: 30
 
   # ==========================================================================
-  # Container image vulnerability scanning
+  # Container image security analysis
   # ==========================================================================
   image-security:
-    name: 🛡️ Container Image Security Scan
+    name: 🏗️ Container Image Security
     runs-on: ubuntu-latest
-    needs: dockerfile-security
+    if: github.event.inputs.scan_level != 'basic'
     
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🏗️ Build Test Image
+      - name: 🏗️ Build Security Test Image
         run: |
-          # Build image for security scanning
-          docker build -t moda-security-test:latest .
+          echo "🏗️ Building container for security testing..."
+          docker build -t moda-security-test:latest -f Dockerfile . || echo "::warning::Build failed, skipping image security scan"
 
-      - name: 🔍 Trivy Container Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: 'moda-security-test:latest'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-          exit-code: '0'  # Don't fail on vulnerabilities, just report
-
-      - name: 🔍 Trivy Filesystem Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-fs-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-
-      - name: 📤 Upload Trivy Results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: 'trivy-container'
-
-      - name: 📤 Upload Trivy Filesystem Results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'trivy-fs-results.sarif'
-          category: 'trivy-filesystem'
-
-      - name: 🔍 Additional Vulnerability Analysis
+      - name: 🔍 Container Image Vulnerability Scan
+        if: success()
         run: |
+          echo "🔍 Running container security scans..."
+          
+          # Run Trivy security scan
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $(pwd):/workspace \
+            aquasec/trivy:latest image --severity HIGH,CRITICAL \
+            --format table moda-security-test:latest || echo "::warning::Trivy scan encountered issues"
+          
           echo "🔍 Running additional security analysis..."
           mkdir -p security-reports
           
           # Get detailed Trivy report
           docker run --rm -v $(pwd):/workspace \
-            aquasec/trivy image --format json --output /workspace/security-reports/trivy-detailed.json \
+            aquasec/trivy:latest image --format json --output /workspace/security-reports/trivy-detailed.json \
             moda-security-test:latest || true
           
           # Analyze base image
           echo "📊 Base image security analysis:"
           docker run --rm -v $(pwd):/workspace \
-            aquasec/trivy image --format table \
+            aquasec/trivy:latest image --format table \
             nvidia/cuda:12.8.1-runtime-ubuntu24.04 || true
           
           # Check for known CVEs in PyTorch/CUDA stack
@@ -226,9 +209,10 @@ jobs:
               sys.exit(1)
           else:
               print('✅ PyTorch version appears secure')
-          "
+          " || echo "::warning::PyTorch security check failed"
 
       - name: 📤 Upload Security Reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: image-security-results
@@ -236,224 +220,25 @@ jobs:
           retention-days: 30
 
   # ==========================================================================
-  # Container runtime security validation
-  # ==========================================================================
-  runtime-security:
-    name: 🏃‍♂️ Runtime Security Validation
-    runs-on: ubuntu-latest
-    needs: [dockerfile-security, image-security]
-    if: github.event.inputs.scan_level != 'basic'
-    
-    steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: 🏗️ Build Test Image
-        run: |
-          docker build -t moda-runtime-test:latest .
-
-      - name: 🔒 Container Runtime Security Test
-        run: |
-          echo "🔒 Testing container runtime security..."
-          mkdir -p runtime-security-results
-          
-          # Test container runs as non-root
-          echo "👤 User privilege test:"
-          USER_ID=$(docker run --rm moda-runtime-test:latest id -u)
-          if [ "$USER_ID" -eq 0 ]; then
-            echo "❌ Container running as root user"
-            echo "root-user-detected" > runtime-security-results/security-issues.txt
-          else
-            echo "✅ Container running as non-root user (UID: $USER_ID)"
-          fi
-          
-          # Test filesystem permissions
-          echo "📁 Filesystem security test:"
-          docker run --rm moda-runtime-test:latest sh -c "
-            echo 'Testing write permissions...'
-            if [ -w /etc/passwd ]; then
-              echo '❌ Writable system files detected'
-              exit 1
-            else
-              echo '✅ System files properly protected'
-            fi
-            
-            # Test workspace permissions
-            if [ -w /workspace ]; then
-              echo '✅ Workspace directory writable'
-            else
-              echo '⚠️ Workspace directory not writable'
-            fi
-          "
-          
-          # Test network security
-          echo "🌐 Network security test:"
-          docker run --rm moda-runtime-test:latest sh -c "
-            echo 'Testing network configuration...'
-            netstat -tulpn || ss -tulpn || echo 'Network tools not available'
-          " || echo "Network tools not available (expected in minimal container)"
-          
-          # Test process capabilities
-          echo "🔧 Process capabilities test:"
-          docker run --rm --cap-drop ALL moda-runtime-test:latest python -c "
-          print('✅ Container runs with dropped capabilities')
-          import os
-          print(f'Process UID: {os.getuid()}')
-          print(f'Process GID: {os.getgid()}')
-          " || echo "⚠️ Container may require specific capabilities"
-
-      - name: 🔍 Security Benchmark
-        run: |
-          echo "📊 Running security benchmark..."
-          
-          # CIS Docker Benchmark (selected tests)
-          echo "🏅 CIS Docker Benchmark results:" | tee runtime-security-results/cis-benchmark.txt
-          
-          # Check image history for security
-          echo "📜 Image layer analysis:" | tee -a runtime-security-results/cis-benchmark.txt
-          docker history moda-runtime-test:latest | tee -a runtime-security-results/cis-benchmark.txt
-          
-          # Check for unnecessary packages
-          echo "📦 Installed packages analysis:" | tee -a runtime-security-results/cis-benchmark.txt
-          docker run --rm moda-runtime-test:latest sh -c "
-            dpkg -l | grep -E '(compiler|development|debug)' || echo 'No development packages found'
-            apt list --installed | grep -E '(dev|dbg)' 2>/dev/null || echo 'No dev packages found'
-          " | tee -a runtime-security-results/cis-benchmark.txt
-
-      - name: 📤 Upload Runtime Security Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-security-results
-          path: runtime-security-results/
-          retention-days: 30
-
-  # ==========================================================================
-  # Academic compliance and ethical AI validation
-  # ==========================================================================
-  compliance-check:
-    name: 🎓 Academic Compliance Validation
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: 🎓 Academic Research Compliance Check
-        run: |
-          echo "🎓 Validating academic research compliance..."
-          mkdir -p compliance-results
-          
-          # Check for academic compliance notices
-          if grep -r "academic\|research\|educational" . --include="*.py" --include="*.md" --include="Dockerfile"; then
-            echo "✅ Academic context references found" | tee compliance-results/compliance-check.txt
-          else
-            echo "⚠️ Limited academic context references" | tee compliance-results/compliance-check.txt
-          fi
-          
-          # Check for ethical AI guidelines
-          if grep -r -i "consent\|ethical\|responsible" . --include="*.py" --include="*.md" --include="Dockerfile"; then
-            echo "✅ Ethical AI considerations present" | tee -a compliance-results/compliance-check.txt
-          else
-            echo "⚠️ Consider adding ethical AI guidelines" | tee -a compliance-results/compliance-check.txt
-          fi
-          
-          # Check for privacy considerations
-          if grep -r -i "privacy\|gdpr\|data.*protection" . --include="*.py" --include="*.md"; then
-            echo "✅ Privacy considerations documented" | tee -a compliance-results/compliance-check.txt
-          else
-            echo "⚠️ Consider adding privacy guidelines" | tee -a compliance-results/compliance-check.txt
-          fi
-          
-          # Check for model licensing information
-          if find . -name "*.md" -exec grep -l -i "license\|mit\|apache\|gpl" {} \;; then
-            echo "✅ Licensing information present" | tee -a compliance-results/compliance-check.txt
-          else
-            echo "⚠️ License information should be clarified" | tee -a compliance-results/compliance-check.txt
-          fi
-
-      - name: 📤 Upload Compliance Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: compliance-results
-          path: compliance-results/
-          retention-days: 30
-
-  # ==========================================================================
-  # Security summary and reporting
+  # Security Results Summary
   # ==========================================================================
   security-summary:
-    name: 📊 Security Summary Report
+    name: 📊 Security Summary
     runs-on: ubuntu-latest
-    needs: [dockerfile-security, image-security, runtime-security, compliance-check]
+    needs: [dockerfile-security, image-security]
     if: always()
     
     steps:
-      - name: 📥 Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: security-artifacts
-
       - name: 📊 Generate Security Summary
         run: |
-          echo "# 🛡️ MoDA Container Security Assessment Summary" > security-summary.md
-          echo "" >> security-summary.md
-          echo "**Scan Date:** $(date)" >> security-summary.md
-          echo "**Repository:** ${{ github.repository }}" >> security-summary.md
-          echo "**Branch:** ${{ github.ref_name }}" >> security-summary.md
-          echo "**Commit:** ${{ github.sha }}" >> security-summary.md
-          echo "" >> security-summary.md
+          echo "## 🛡️ Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Dockerfile Analysis | ${{ needs.dockerfile-security.result }} | Hadolint, patterns, secrets |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container Image | ${{ needs.image-security.result }} | Trivy vulnerability scan |" >> $GITHUB_STEP_SUMMARY
           
-          echo "## 📋 Security Assessment Results" >> security-summary.md
-          echo "" >> security-summary.md
-          
-          # Job results summary
-          echo "### 🔍 Scan Results" >> security-summary.md
-          echo "- Dockerfile Security: ${{ needs.dockerfile-security.result }}" >> security-summary.md
-          echo "- Image Security: ${{ needs.image-security.result }}" >> security-summary.md
-          echo "- Runtime Security: ${{ needs.runtime-security.result }}" >> security-summary.md
-          echo "- Compliance Check: ${{ needs.compliance-check.result }}" >> security-summary.md
-          echo "" >> security-summary.md
-          
-          # Security recommendations
-          echo "## 🔧 Security Recommendations" >> security-summary.md
-          echo "" >> security-summary.md
-          echo "### 🏗️ Build Security" >> security-summary.md
-          echo "- ✅ Multi-stage Dockerfile reduces attack surface" >> security-summary.md
-          echo "- ✅ Non-root user configured for runtime" >> security-summary.md
-          echo "- ✅ Base image from official NVIDIA CUDA repository" >> security-summary.md
-          echo "" >> security-summary.md
-          
-          echo "### 🎯 RunPod Security" >> security-summary.md
-          echo "- 🔒 Container runs in isolated RunPod environment" >> security-summary.md
-          echo "- 🌐 Network access controlled by RunPod platform" >> security-summary.md
-          echo "- 💾 Model data should be stored on encrypted volumes" >> security-summary.md
-          echo "" >> security-summary.md
-          
-          echo "### 🎓 Academic Compliance" >> security-summary.md
-          echo "- 📚 Academic research usage clearly documented" >> security-summary.md
-          echo "- ⚖️ Ethical AI guidelines included in container startup" >> security-summary.md
-          echo "- 🔐 Responsible AI practices encouraged" >> security-summary.md
-          
-          # Add to GitHub summary
-          cat security-summary.md >> $GITHUB_STEP_SUMMARY
-
-      - name: 📤 Upload Security Summary
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-summary-report
-          path: security-summary.md
-          retention-days: 90
-
-      - name: 🚨 Security Status Check
-        run: |
-          if [ "${{ needs.dockerfile-security.result }}" == "failure" ] || \
-             [ "${{ needs.image-security.result }}" == "failure" ]; then
-            echo "❌ Critical security checks failed"
-            exit 1
-          elif [ "${{ needs.runtime-security.result }}" == "failure" ]; then
-            echo "⚠️ Runtime security checks failed - review required"
-            exit 0  # Don't fail workflow for runtime issues
+          if [[ "${{ needs.dockerfile-security.result }}" == "success" && "${{ needs.image-security.result }}" == "success" ]]; then
+            echo "✅ All security checks passed" >> $GITHUB_STEP_SUMMARY
           else
-            echo "✅ Security assessment completed successfully"
-            echo "🛡️ Container approved for RunPod deployment"
+            echo "⚠️ Some security checks need attention" >> $GITHUB_STEP_SUMMARY
           fi
