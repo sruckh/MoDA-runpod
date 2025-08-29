@@ -32,7 +32,7 @@ ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
-# Install system dependencies
+# Install system dependencies with Ubuntu 24.04 compatible packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Essential build tools
     build-essential \
@@ -41,34 +41,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
     ca-certificates \
-    # Python and development
-    python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-dev \
-    python${PYTHON_VERSION}-distutils \
+    # Python and development (Ubuntu 24.04 packages)
+    python3.10 \
+    python3.10-dev \
+    python3.10-venv \
     python3-pip \
     # Media and graphics libraries
     ffmpeg \
     libsm6 \
     libxext6 \
-    libxrender-dev \
+    libxrender1 \
     libglib2.0-0 \
     libgl1-mesa-glx \
-    libglib2.0-0 \
     # Audio processing
     libasound2-dev \
     libportaudio2 \
-    libsndfile1 \
-    # Image processing
-    libjpeg-dev \
+    libsndfile1-dev \
+    # Image processing (Ubuntu 24.04 package names)
+    libjpeg-turbo8-dev \
     libpng-dev \
-    libtiff-dev \
+    libtiff5-dev \
     libwebp-dev \
+    # Additional dependencies for PyTorch/CUDA
+    pkg-config \
     # Cleanup
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Setup Python symlinks
-RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
 # Install pip and upgrade
@@ -116,10 +117,10 @@ ENV PATH=${CUDA_HOME}/bin:/workspace/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 ENV PYTHONPATH=/workspace:${PYTHONPATH}
 
-# Install runtime dependencies only
+# Install runtime dependencies only (Ubuntu 24.04 compatible)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
-    python3.10-distutils \
+    python3.10-venv \
     python3-pip \
     # Runtime libraries for media processing
     ffmpeg \
@@ -133,9 +134,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libportaudio2 \
     libsndfile1 \
     # Image processing runtime libraries
-    libjpeg8 \
+    libjpeg-turbo8 \
     libpng16-16 \
-    libtiff6 \
+    libtiff5 \
     libwebp7 \
     # Network utilities
     curl \
