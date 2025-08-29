@@ -200,8 +200,17 @@ jobs:
             image=moby/buildkit:latest
           buildkitd-flags: --allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host
 
+      - name: 🔍 Push Decision Debug
+        run: |
+          echo "🔍 Push decision analysis:"
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Should push from prepare job: ${{ needs.prepare.outputs.should-push }}"
+          
       - name: 🔐 Login to Docker Hub
-        if: needs.prepare.outputs.should-push == 'true'
+        # Always try to login on main branch or manual dispatch
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
@@ -209,10 +218,10 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
           
       - name: 📊 Debug Push Configuration
-        if: needs.prepare.outputs.should-push == 'true'
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         run: |
           echo "🔍 Push configuration debug:"
-          echo "Should push: ${{ needs.prepare.outputs.should-push }}"
+          echo "Will push: true"
           echo "Registry: ${{ env.DOCKER_REGISTRY }}"
           echo "Namespace: ${{ env.DOCKER_NAMESPACE }}"
           echo "Image name: ${{ env.IMAGE_NAME }}"
@@ -224,7 +233,7 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: ${{ env.PLATFORM }}
-          push: ${{ needs.prepare.outputs.should-push }}
+          push: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
           tags: ${{ needs.prepare.outputs.image-tags }}
           labels: ${{ needs.prepare.outputs.image-labels }}
           cache-from: ${{ needs.prepare.outputs.cache-from }}
@@ -237,8 +246,8 @@ jobs:
             FLASH_ATTN_VERSION=2.8.2
           outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=MoDA RunPod optimized container
 
-      - name: 🔍 Inspect Built Image
-        if: needs.prepare.outputs.should-push == 'true'
+      - name: 🔍 Inspect Built Image  
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         run: |
           echo "🔍 Inspecting built image..."
           docker buildx imagetools inspect ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
@@ -259,7 +268,7 @@ jobs:
     name: 🧪 Test Container Functionality
     runs-on: ubuntu-latest
     needs: [prepare, build]
-    if: needs.prepare.outputs.should-push == 'true'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: 🏗️ Set up Docker Buildx
@@ -349,7 +358,7 @@ jobs:
     name: 🎯 Validate RunPod Compatibility
     runs-on: ubuntu-latest
     needs: [prepare, build, test]
-    if: needs.prepare.outputs.should-push == 'true'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: 📥 Checkout Repository
@@ -402,7 +411,7 @@ jobs:
     name: ⚡ Performance Validation
     runs-on: ubuntu-latest
     needs: [prepare, build, test]
-    if: needs.prepare.outputs.should-push == 'true'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: ⚡ Container Performance Analysis
