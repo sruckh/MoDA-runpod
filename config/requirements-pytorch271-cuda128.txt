@@ -9,8 +9,9 @@ torch==2.7.1+cu128
 torchvision==0.20.1+cu128
 torchaudio==2.7.1+cu128
 
-# Flash Attention (compatible with PyTorch 2.7.1)
-flash-attn==2.8.2
+# Flash Attention (precompiled wheel for CUDA 12.8 + PyTorch 2.7 + Python 3.10)
+# Installed via direct wheel URL in Dockerfile for optimal compatibility
+# https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.2/flash_attn-2.8.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
 # Core ML libraries
 accelerate==0.35.0

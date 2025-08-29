@@ -157,16 +157,27 @@ jobs:
       - name: 🚦 Determine Push Strategy
         id: should-push
         run: |
+          echo "🔍 Event: ${{ github.event_name }}"
+          echo "🌿 Ref: ${{ github.ref }}"
+          echo "🌿 Branch: ${{ github.ref_name }}"
+          
           # Push on main/dev branches and workflow_dispatch
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
-             [[ "${{ github.ref }}" == "refs/heads/dev" ]] || \
-             [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "result=true" >> $GITHUB_OUTPUT
-            echo "🚀 Will push to registry"
+          SHOULD_PUSH="false"
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            SHOULD_PUSH="true"
+            echo "✅ Main branch detected - will push"
+          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            SHOULD_PUSH="true"  
+            echo "✅ Dev branch detected - will push"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            SHOULD_PUSH="true"
+            echo "✅ Manual dispatch detected - will push"
           else
-            echo "result=false" >> $GITHUB_OUTPUT
-            echo "🔍 Build only (no push for PR)"
+            echo "🔍 Branch/event not configured for push - build only"
           fi
+          
+          echo "result=$SHOULD_PUSH" >> $GITHUB_OUTPUT
+          echo "🚀 Push decision: $SHOULD_PUSH"
 
   # ==========================================================================
   # Multi-stage optimized Docker build
@@ -196,6 +207,16 @@ jobs:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+          
+      - name: 📊 Debug Push Configuration
+        if: needs.prepare.outputs.should-push == 'true'
+        run: |
+          echo "🔍 Push configuration debug:"
+          echo "Should push: ${{ needs.prepare.outputs.should-push }}"
+          echo "Registry: ${{ env.DOCKER_REGISTRY }}"
+          echo "Namespace: ${{ env.DOCKER_NAMESPACE }}"
+          echo "Image name: ${{ env.IMAGE_NAME }}"
+          echo "Target: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ env.IMAGE_NAME }}"
 
       - name: 🏗️ Build and Export Image
         uses: docker/build-push-action@v5

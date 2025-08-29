@@ -85,10 +85,9 @@ WORKDIR /build
 # Copy dependency files
 COPY config/requirements-pytorch271-cuda128.txt /build/requirements.txt
 
-# Install Flash Attention from GitHub releases (optimized for CUDA 12.8)
-RUN pip install flash-attn==${FLASH_ATTN_VERSION} \
-    --no-build-isolation \
-    --find-links https://github.com/Dao-AILab/flash-attention/releases/
+# Install Flash Attention from specific precompiled wheel (CUDA 12.8 + PyTorch 2.7 + Python 3.10)
+RUN pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.2/flash_attn-2.8.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl \
+    --no-build-isolation
 
 # Install PyTorch with CUDA 12.8 support
 RUN pip install torch==${PYTORCH_VERSION}+cu${CUDA_VERSION} \
